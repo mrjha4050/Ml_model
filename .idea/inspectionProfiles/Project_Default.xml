@@ -1,0 +1,84 @@
+<component name="InspectionProjectProfileManager">
+  <profile version="1.0">
+    <option name="myName" value="Project Default" />
+    <inspection_tool class="Eslint" enabled="true" level="WARNING" enabled_by_default="true" />
+    <inspection_tool class="PyPackageRequirementsInspection" enabled="true" level="INFORMATION" enabled_by_default="true">
+      <option name="ignoredPackages">
+        <list>
+          <option value="amqp" />
+          <option value="asgiref" />
+          <option value="billiard" />
+          <option value="celery" />
+          <option value="certifi" />
+          <option value="charset-normalizer" />
+          <option value="click" />
+          <option value="click-didyoumean" />
+          <option value="click-plugins" />
+          <option value="click-repl" />
+          <option value="contourpy" />
+          <option value="cycler" />
+          <option value="Django" />
+          <option value="django-cors-headers" />
+          <option value="djangorestframework" />
+          <option value="djangorestframework_simplejwt" />
+          <option value="dnspython" />
+          <option value="filelock" />
+          <option value="fonttools" />
+          <option value="fsspec" />
+          <option value="gunicorn" />
+          <option value="idna" />
+          <option value="Jinja2" />
+          <option value="kiwisolver" />
+          <option value="kombu" />
+          <option value="MarkupSafe" />
+          <option value="matplotlib" />
+          <option value="mpmath" />
+          <option value="networkx" />
+          <option value="numpy" />
+          <option value="opencv-python" />
+          <option value="packaging" />
+          <option value="pandas" />
+          <option value="pillow" />
+          <option value="prompt_toolkit" />
+          <option value="psutil" />
+          <option value="py-cpuinfo" />
+          <option value="PyJWT" />
+          <option value="pyparsing" />
+          <option value="python-dateutil" />
+          <option value="pytz" />
+          <option value="PyYAML" />
+          <option value="requests" />
+          <option value="rest-framework-simplejwt" />
+          <option value="scipy" />
+          <option value="six" />
+          <option value="sqlparse" />
+          <option value="sympy" />
+          <option value="torch" />
+          <option value="torchvision" />
+          <option value="tqdm" />
+          <option value="typing_extensions" />
+          <option value="tzdata" />
+          <option value="ultralytics" />
+          <option value="ultralytics-thop" />
+          <option value="urllib3" />
+          <option value="vine" />
+          <option value="wcwidth" />
+          <option value="redis" />
+          <option value="aioredis" />
+          <option value="channels" />
+          <option value="channels-redis" />
+          <option value="uvicorn" />
+          <option value="websockets" />
+          <option value="django-jazzmin" />
+        </list>
+      </option>
+    </inspection_tool>
+    <inspection_tool class="PyUnresolvedReferencesInspection" enabled="true" level="WARNING" enabled_by_default="true">
+      <option name="ignoredIdentifiers">
+        <list>
+          <option value="jwt.*" />
+        </list>
+      </option>
+    </inspection_tool>
+  </profile>
+</component>
