@@ -7,7 +7,7 @@ from pathlib import Path
 # PATH CONFIG
 # =========================
 MODEL_PATH = Path("models/xgb_ranker.pkl")
-DATA_PATH = Path("dataset/indian_places.xlsx")
+DATA_PATH = Path("dataset/indian_place.xlsx")
 
 # =========================
 # LOAD MODEL (once)
@@ -38,7 +38,8 @@ def load_data():
         "Google review rating": "rating",
         "Number of google review in lakhs": "review_count",
         "time needed to visit in hrs": "visit_time",
-        "Entrance Fee in INR": "fee"
+        "Entrance Fee in INR": "fee",
+        "Maps": "maps_url",
     })
 
     df["rating"] = df["rating"].fillna(df["rating"].mean())
@@ -99,9 +100,12 @@ def get_ranked_places(city_name: str, top_k: int = 10):
     # Sort by ML score
     city_df = city_df.sort_values(by="ml_score", ascending=False)
 
-    results = city_df.head(top_k)[
-        ["place_name", "rating", "visit_time", "ml_score"]
-    ]
+    cols = ["place_name", "rating", "visit_time", "ml_score"]
+    if "maps_url" in city_df.columns:
+        cols.append("maps_url")
+        city_df["maps_url"] = city_df["maps_url"].fillna("")
+
+    results = city_df.head(top_k)[cols]
 
     return results.to_dict(orient="records")
 

@@ -5,25 +5,14 @@ from pathlib import Path
 from xgboost import XGBRegressor
 from sklearn.preprocessing import LabelEncoder
 
-# =========================
-# PATH CONFIG
-# =========================
 DATA_PATH = Path("dataset/indian_places.xlsx")
 MODEL_PATH = Path("models/xgb_ranker.pkl")
 
-# =========================
-# LOAD DATA
-# =========================
 print("Loading dataset...")
 df = pd.read_excel(DATA_PATH)
 
 print(f"Rows loaded: {len(df)}")
 
-# =========================
-# CLEAN COLUMNS
-# =========================
-
-# Rename columns for easier use (adjust if names differ)
 df = df.rename(columns={
     "City": "city",
     "State": "state",
@@ -36,18 +25,12 @@ df = df.rename(columns={
     "Entrance Fee in INR": "fee"
 })
 
-# Fill missing values
 df["rating"] = df["rating"].fillna(df["rating"].mean())
 df["review_count"] = df["review_count"].fillna(0)
 df["visit_time"] = df["visit_time"].fillna(df["visit_time"].median())
 df["significance"] = df["significance"].fillna("Local")
 
-# Convert review count to numeric log scale
 df["log_reviews"] = np.log1p(df["review_count"])
-
-# =========================
-# ENCODE CATEGORICAL DATA
-# =========================
 
 le_city = LabelEncoder()
 df["city_encoded"] = le_city.fit_transform(df["city"].astype(str))
@@ -58,10 +41,6 @@ df["type_encoded"] = le_type.fit_transform(df["type"].astype(str))
 le_sig = LabelEncoder()
 df["sig_encoded"] = le_sig.fit_transform(df["significance"].astype(str))
 
-# =========================
-# CREATE SYNTHETIC TARGET
-# =========================
-# This simulates "how good a place is"
 
 df["target_score"] = (
     df["rating"] * 0.6 +
@@ -69,9 +48,6 @@ df["target_score"] = (
     (1 / (df["visit_time"] + 1)) * 0.1
 )
 
-# =========================
-# SELECT FEATURES
-# =========================
 features = [
     "city_encoded",
     "type_encoded",
@@ -84,9 +60,6 @@ features = [
 X = df[features]
 y = df["target_score"]
 
-# =========================
-# TRAIN MODEL
-# =========================
 print("Training XGBoost model...")
 
 model = XGBRegressor(
@@ -100,9 +73,6 @@ model = XGBRegressor(
 
 model.fit(X, y)
 
-# =========================
-# SAVE MODEL
-# =========================
 MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 joblib.dump({

@@ -2,8 +2,18 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import joblib
+import time
 from pathlib import Path
 import sys
+
+try:
+    import folium
+    from streamlit_folium import st_folium
+    from geopy.geocoders import Nominatim
+    import requests as _requests
+    MAP_LIBS = True
+except ImportError:
+    MAP_LIBS = False
 
 # Add src to path
 sys.path.append(str(Path(__file__).parent / "src"))
@@ -29,6 +39,7 @@ def detect_columns(columns):
         'type':         ['type', 'category', 'kind'],
         'significance': ['significance', 'important'],
         'fee':          ['entrance fee', 'fee', 'price', 'cost', 'ticket'],
+        'maps_url':     ['maps', 'map url', 'google maps', 'location url', 'place url'],
     }
     detected = {}
     used_columns = set()
@@ -45,6 +56,206 @@ def detect_columns(columns):
             if field in detected:
                 break
     return detected
+
+# =========================
+# GEOCODING & MAP HELPERS
+# =========================
+@st.cache_data(show_spinner=False)
+def geocode_place(place_name: str, city: str):
+    """Return (lat, lon) for a place via Nominatim. Returns (None, None) on failure."""
+    if not MAP_LIBS:
+        return None, None
+    try:
+        geolocator = Nominatim(user_agent="travel_maker_app_v1", timeout=8)
+        time.sleep(1)  # Nominatim rate-limit: 1 req/sec
+        location = geolocator.geocode(f"{place_name}, {city}, India")
+        if location:
+            return location.latitude, location.longitude
+    except Exception:
+        pass
+    return None, None
+
+
+@st.cache_data(show_spinner=False)
+def get_road_route(lat1: float, lon1: float, lat2: float, lon2: float):
+    """
+    Fetch the actual road route between two points using OSRM (free, no API key).
+    Returns (road_polyline_coords [[lat,lon],...], distance_km, duration_min)
+    or (None, None, None) on failure.
+    """
+    url = (
+        f"http://router.project-osrm.org/route/v1/driving/"
+        f"{lon1},{lat1};{lon2},{lat2}"
+        f"?overview=full&geometries=geojson&steps=false"
+    )
+    try:
+        resp = _requests.get(url, timeout=12)
+        data = resp.json()
+        if data.get("code") == "Ok":
+            route = data["routes"][0]
+            dist_km = round(route["distance"] / 1000.0, 1)
+            dur_min = round(route["duration"] / 60.0, 0)
+            # GeoJSON coords are [lon, lat] — flip to [lat, lon] for folium
+            coords = [[c[1], c[0]] for c in route["geometry"]["coordinates"]]
+            return coords, dist_km, int(dur_min)
+    except Exception:
+        pass
+    return None, None, None
+
+
+_DAY_COLORS = ["red", "blue", "green", "purple", "orange",
+               "darkred", "darkblue", "darkgreen", "cadetblue", "lightred"]
+
+
+_LINE_COLORS = {
+    "red": "#e74c3c", "blue": "#2980b9", "green": "#27ae60",
+    "purple": "#8e44ad", "orange": "#e67e22", "darkred": "#922b21",
+    "darkblue": "#1a5276", "darkgreen": "#1e8449",
+    "cadetblue": "#2e86c1", "lightred": "#f1948a",
+}
+_CIRCLE_COLORS = {
+    "red": "#e74c3c", "blue": "#2980b9", "green": "#27ae60",
+    "purple": "#8e44ad", "orange": "#e67e22", "darkred": "#922b21",
+    "darkblue": "#1a5276", "darkgreen": "#1e8449",
+    "cadetblue": "#2e86c1", "lightred": "#f1948a",
+}
+
+
+def _draw_route(m, coords, valid_places, color, label_prefix=""):
+    """
+    Draw numbered markers + road-following polylines with distance labels.
+    Uses OSRM for actual road routes; falls back to straight line if OSRM fails.
+    Returns a list of distance-row dicts.
+    """
+    hex_color = _LINE_COLORS.get(color, "#e74c3c")
+    circle_bg = _CIRCLE_COLORS.get(color, "#e74c3c")
+    distances = []
+
+    # --- Markers ---
+    for idx, (place, (lat, lon)) in enumerate(zip(valid_places, coords), 1):
+        maps_url = place.get("maps_url", "")
+        link_html = (
+            f'<a href="{maps_url}" target="_blank">📍 Open in Google Maps</a>'
+            if maps_url else ""
+        )
+        score_line = f"🎯 ML Score: {place['ml_score']:.3f}<br>" if "ml_score" in place else ""
+        popup_html = f"""
+        <div style="font-family:sans-serif;min-width:170px">
+            <b>{label_prefix}Stop {idx}: {place['place_name']}</b><br>
+            ⭐ {place['rating']:.1f}/5 &nbsp;|&nbsp; ⏱️ {place['visit_time']:.1f} hrs<br>
+            {score_line}{link_html}
+        </div>"""
+        folium.Marker(
+            [lat, lon],
+            popup=folium.Popup(popup_html, max_width=260),
+            tooltip=f"{label_prefix}Stop {idx}: {place['place_name']}",
+            icon=folium.DivIcon(
+                html=(
+                    f'<div style="background:{circle_bg};color:white;'
+                    f'width:28px;height:28px;border-radius:50%;'
+                    f'display:flex;align-items:center;justify-content:center;'
+                    f'font-weight:bold;font-size:13px;border:2px solid white;'
+                    f'box-shadow:0 2px 4px rgba(0,0,0,.45)">{idx}</div>'
+                ),
+                icon_size=(28, 28),
+                icon_anchor=(14, 14),
+            ),
+        ).add_to(m)
+
+    # --- Road routes between consecutive stops ---
+    for i in range(len(coords) - 1):
+        p1, p2 = coords[i], coords[i + 1]
+
+        road_coords, dist_km, dur_min = get_road_route(p1[0], p1[1], p2[0], p2[1])
+
+        if road_coords:
+            folium.PolyLine(
+                road_coords,
+                color=hex_color,
+                weight=4,
+                opacity=0.85,
+                tooltip=f"🚗 {dist_km:.1f} km · ~{dur_min} min by road",
+            ).add_to(m)
+            mid_idx = len(road_coords) // 2
+            label_pos = road_coords[mid_idx]
+            label_text = f"🚗 {dist_km} km · {dur_min} min"
+        else:
+            # Fallback: straight dashed line with geodesic distance
+            from geopy.distance import geodesic as _geodesic
+            dist_km = round(_geodesic(p1, p2).km, 1)
+            dur_min = None
+            folium.PolyLine(
+                [p1, p2],
+                color=hex_color,
+                weight=3,
+                opacity=0.55,
+                dash_array="8 6",
+                tooltip=f"📏 {dist_km:.1f} km (straight line, road data unavailable)",
+            ).add_to(m)
+            label_pos = [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2]
+            label_text = f"📏 {dist_km} km"
+
+        folium.Marker(
+            label_pos,
+            icon=folium.DivIcon(
+                html=(
+                    f'<div style="background:white;border:1px solid {hex_color};'
+                    f'border-radius:10px;padding:2px 8px;font-size:11px;'
+                    f'font-weight:600;color:{hex_color};white-space:nowrap;'
+                    f'box-shadow:0 1px 3px rgba(0,0,0,.2)">{label_text}</div>'
+                ),
+                icon_size=(140, 22),
+                icon_anchor=(70, 11),
+            ),
+        ).add_to(m)
+
+        row = {
+            "From": valid_places[i]["place_name"],
+            "To": valid_places[i + 1]["place_name"],
+            "Distance (km)": dist_km,
+        }
+        if dur_min is not None:
+            row["Drive Time (min)"] = dur_min
+        distances.append(row)
+
+    return distances
+
+
+def build_places_map(places: list, city: str, day_groups: dict = None):
+    """
+    Build a folium map with numbered markers connected by distance-labelled route lines.
+
+    - day_groups=None  → all places in one ranked route (Explore mode)
+    - day_groups=dict  → each day drawn in a different colour (Itinerary mode)
+
+    Returns (folium.Map, list-of-distance-dicts).
+    """
+    city_lat, city_lon = geocode_place(city, city)
+    center = [city_lat, city_lon] if city_lat else [20.5937, 78.9629]
+    zoom = 12 if city_lat else 5
+    m = folium.Map(location=center, zoom_start=zoom, tiles="OpenStreetMap")
+
+    all_distances = []
+
+    groups = day_groups if day_groups else {"": places}
+
+    for day_idx, (day_name, group_places) in enumerate(groups.items()):
+        color = _DAY_COLORS[day_idx % len(_DAY_COLORS)]
+        coords, valid_places = [], []
+        for place in group_places:
+            lat, lon = geocode_place(place["place_name"], city)
+            if lat:
+                coords.append((lat, lon))
+                valid_places.append(place)
+
+        rows = _draw_route(m, coords, valid_places, color, label_prefix=f"{day_name} " if day_name else "")
+        for r in rows:
+            if day_name:
+                r["Day"] = day_name
+        all_distances.extend(rows)
+
+    return m, all_distances
+
 
 # =========================
 # PAGE CONFIG
@@ -245,6 +456,31 @@ if mode == "🔍 Explore Places":
                                     st.write(f"**State:** {place_info.get('state', 'N/A')}")
                                     st.write(f"**Significance:** {place_info.get('significance', 'N/A')}")
 
+                            maps_url = place.get("maps_url", "")
+                            if maps_url:
+                                st.link_button("📍 Open in Maps", maps_url, use_container_width=True)
+
+                # Map view
+                if MAP_LIBS:
+                    st.markdown("---")
+                    with st.expander("🗺️ View All on Map + Distances", expanded=False):
+                        with st.spinner("Geocoding places… (first load may take a moment)"):
+                            m, distances = build_places_map(places, selected_city)
+                        st_folium(m, width="100%", height=520, returned_objects=[])
+                        if distances:
+                            st.markdown("**📏 Route distances (in ranked order):**")
+                            base_cols = ["From", "To", "Distance (km)"]
+                            if any("Drive Time (min)" in d for d in distances):
+                                base_cols.append("Drive Time (min)")
+                            dist_df = pd.DataFrame(distances).reindex(columns=base_cols)
+                            st.dataframe(dist_df, use_container_width=True, hide_index=True)
+                            total_km = sum(d["Distance (km)"] for d in distances)
+                            total_min = sum(d.get("Drive Time (min)", 0) for d in distances)
+                            c1, c2 = st.columns(2)
+                            c1.metric("Total Road Distance", f"{total_km:.1f} km")
+                            if total_min:
+                                c2.metric("Total Drive Time", f"{int(total_min)} min")
+
 # =========================
 # MODE 2: GENERATE ITINERARY
 # =========================
@@ -336,7 +572,34 @@ elif mode == "📅 Generate Itinerary":
                                     st.write(f"**ML Score:** {place.get('ml_score', 0):.3f}")
                                     st.write(f"**Significance:** {place_info.get('significance', 'N/A')}")
 
+                        maps_url = place.get("maps_url", "")
+                        if maps_url:
+                            st.link_button("📍 Open in Maps", maps_url)
+
                         st.markdown("---")
+
+                # Full trip map
+                if MAP_LIBS:
+                    st.markdown("---")
+                    with st.expander("🗺️ View Full Trip on Map + Distances", expanded=False):
+                        with st.spinner("Geocoding places… (first load may take a moment)"):
+                            m, distances = build_places_map([], selected_city, day_groups=itinerary)
+                        st_folium(m, width="100%", height=540, returned_objects=[])
+                        if distances:
+                            st.markdown("**📏 Distances between consecutive stops:**")
+                            base_cols = ["From", "To", "Distance (km)"]
+                            if any("Day" in d for d in distances):
+                                base_cols = ["Day"] + base_cols
+                            if any("Drive Time (min)" in d for d in distances):
+                                base_cols.append("Drive Time (min)")
+                            dist_df = pd.DataFrame(distances).reindex(columns=base_cols)
+                            st.dataframe(dist_df, use_container_width=True, hide_index=True)
+                            total_km = sum(d["Distance (km)"] for d in distances)
+                            total_min = sum(d.get("Drive Time (min)", 0) for d in distances)
+                            c1, c2 = st.columns(2)
+                            c1.metric("Total Road Distance", f"{total_km:.1f} km")
+                            if total_min:
+                                c2.metric("Total Drive Time", f"{int(total_min)} min")
 
 # =========================
 # MODE 3: UPLOAD & TRAIN
@@ -479,7 +742,7 @@ elif mode == "📤 Upload & Train":
                     }, MODEL_PATH)
 
                     # Save cleaned dataset so predict.py can use it
-                    DATASET_OUT = Path("dataset/indian_places.xlsx")
+                    DATASET_OUT = Path("dataset/indian_place.xlsx")
                     DATASET_OUT.parent.mkdir(parents=True, exist_ok=True)
                     df_t.to_excel(DATASET_OUT, index=False)
 
@@ -511,7 +774,7 @@ if st.sidebar.button("🚀 Train Model", use_container_width=True):
         from sklearn.preprocessing import LabelEncoder
         from xgboost import XGBRegressor
 
-        DATA_PATH = Path("dataset/indian_places.xlsx")
+        DATA_PATH = Path("dataset/indian_place.xlsx")
         MODEL_PATH = Path("models/xgb_ranker.pkl")
 
         df = pd.read_excel(DATA_PATH)
